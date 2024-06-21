@@ -6,48 +6,44 @@
 # Date   : 30.01.2022
 
 
-import  re
-import  os
-import  sys
-import  time
-import  textwrap
-import  contextlib
-import  subprocess
-import  pickle
-import  shutil
-import  warnings
-from    datetime            import  datetime, timedelta
-from    concurrent.futures  import  ProcessPoolExecutor
+import re
+import os
+import sys
+import time
+import textwrap
+import contextlib
+import subprocess
+import pickle
+import shutil
+import warnings
+from datetime import datetime, timedelta
+from concurrent.futures import ProcessPoolExecutor
 
-import  numpy               as      np
-import  pandas              as      pd
-import  toml
-import  cma
+import numpy as np
+import pandas as pd
+import toml
+import cma
 
-import  coexist
+import coexist
 
-from    .base               import  Simulation
-from    .                   import  schedulers
+from .base import Simulation
+from . import schedulers
 
-from    .combiners          import  Product
+from .combiners import Product
 
-from    .code_trees         import  code_contains_variable
-from    .code_trees         import  code_substitute_variable
+from .code_trees import code_contains_variable
+from .code_trees import code_substitute_variable
 
-from    .utilities          import  autorepr
-from    .utilities          import  SignalHandlerKI
-
-
+from .utilities import autorepr
+from .utilities import SignalHandlerKI
 
 
 signal_handler = SignalHandlerKI()
 
 
-
-
-@autorepr(short = {"script"})
+@autorepr(short={"script"})
 class AccessSetup:
-    '''Structure storing constant attributes for an ACCES optimisation run.
+    """Structure storing constant attributes for an ACCES optimisation run.
 
     Code validation and generation are handled too.
 
@@ -79,12 +75,12 @@ class AccessSetup:
 
     rng: np.random.Generator
         The random number generator used, seeded with `seed`.
-    '''
+    """
 
     def __init__(self, script_path):
-        '''Given a path to a user-defined simulation script, extract the free
+        """Given a path to a user-defined simulation script, extract the free
         parameters and generate the ACCES script.
-        '''
+        """
         # Uninitialised parameters (will be set later)
         self.population = None
         self.target = None
@@ -111,63 +107,72 @@ class AccessSetup:
                 params_end_line = i
 
         if params_start_line is None or params_end_line is None:
-            raise NameError(textwrap.fill((
-                f"The user script found in file `{script_path}` did not "
-                "contain the blocks `# ACCESS PARAMETERS START` and "
-                "`# ACCESS PARAMETERS END`. Please define your simulation "
-                "free parameters between these two comments / directives."
-            )))
+            raise NameError(
+                textwrap.fill(
+                    (
+                        f"The user script found in file `{script_path}` did not "
+                        "contain the blocks `# ACCESS PARAMETERS START` and "
+                        "`# ACCESS PARAMETERS END`. Please define your simulation "
+                        "free parameters between these two comments / directives."
+                    )
+                )
+            )
 
         # Execute the code between the two directives to get the initial
         # `parameters`. `exec` saves all the code's variables in the
         # `parameters_exec` dictionary
-        user_params_code = "".join(
-            user_code[params_start_line:params_end_line]
-        )
+        user_params_code = "".join(user_code[params_start_line:params_end_line])
         user_params_exec = dict()
         exec(user_params_code, user_params_exec)
 
         if "parameters" not in user_params_exec:
-            raise NameError(textwrap.fill((
-                "The code between the user script's directives "
-                "`# ACCESS PARAMETERS START` and "
-                "`# ACCESS PARAMETERS END` does not define a variable "
-                "named exactly `parameters`."
-            )))
+            raise NameError(
+                textwrap.fill(
+                    (
+                        "The code between the user script's directives "
+                        "`# ACCESS PARAMETERS START` and "
+                        "`# ACCESS PARAMETERS END` does not define a variable "
+                        "named exactly `parameters`."
+                    )
+                )
+            )
 
         self.validate_parameters(user_params_exec["parameters"])
         self.parameters = user_params_exec["parameters"]
 
         if not code_contains_variable(user_code, "error"):
-            raise NameError(textwrap.fill((
-                f"The user script found in file `{script_path}` does not "
-                "define the required variable `error`."
-            )))
+            raise NameError(
+                textwrap.fill(
+                    (
+                        f"The user script found in file `{script_path}` does not "
+                        "define the required variable `error`."
+                    )
+                )
+            )
 
         # Substitute the `parameters` creation in the user code with loading
         # them from an ACCESS-defined location
         parameters_code = [
-            "\n# Unpickle `parameters` from this script's first " +
-            "command-line argument and set\n",
-            '# `access_id` to a unique simulation ID\n',
+            "\n# Unpickle `parameters` from this script's first "
+            + "command-line argument and set\n",
+            "# `access_id` to a unique simulation ID\n",
             code_substitute_variable(
                 user_code[params_start_line:params_end_line],
                 "parameters",
-                ('with open(sys.argv[1], "rb") as f:\n'
-                 '    parameters = pickle.load(f)\n')
-            )
+                (
+                    'with open(sys.argv[1], "rb") as f:\n'
+                    "    parameters = pickle.load(f)\n"
+                ),
+            ),
         ]
 
         # Also define a unique ACCESS ID for each simulation
-        parameters_code += (
-            'access_id = int(sys.argv[1].split(".")[-2])\n'
-        )
+        parameters_code += 'access_id = int(sys.argv[1].split(".")[-2])\n'
 
         # Read in the `async_access_template.py` code template and find the
         # code injection directives
         template_code_path = os.path.join(
-            os.path.split(coexist.__file__)[0],
-            "template_access_script.py"
+            os.path.split(coexist.__file__)[0], "template_access_script.py"
         )
 
         with open(template_code_path, "r") as f:
@@ -180,13 +185,15 @@ class AccessSetup:
             if line.startswith("# ACCESS INJECT USER CODE END"):
                 inject_end_line = i
 
-        generated_code = "".join((
-            template_code[:inject_start_line + 1] +
-            user_code[:params_start_line + 1] +
-            parameters_code +
-            user_code[params_end_line:] +
-            template_code[inject_end_line:]
-        ))
+        generated_code = "".join(
+            (
+                template_code[: inject_start_line + 1]
+                + user_code[: params_start_line + 1]
+                + parameters_code
+                + user_code[params_end_line:]
+                + template_code[inject_end_line:]
+            )
+        )
 
         self.script = generated_code
 
@@ -196,39 +203,49 @@ class AccessSetup:
         for i in range(len(self.parameters_scaled.columns)):
             self.parameters_scaled.iloc[:, i] /= self.scaling
 
-
     @staticmethod
     def validate_parameters(parameters):
-        '''Validate the free parameters extracted from a user script (a
+        """Validate the free parameters extracted from a user script (a
         ``pandas.DataFrame``).
-        '''
+        """
         if not isinstance(parameters, pd.DataFrame):
-            raise ValueError(textwrap.fill((
-                "The `parameters` variable defined in the user script is "
-                "not a pandas.DataFrame instance (or subclass thereof)."
-            )))
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "The `parameters` variable defined in the user script is "
+                        "not a pandas.DataFrame instance (or subclass thereof)."
+                    )
+                )
+            )
 
         if len(parameters) < 2:
-            raise ValueError(textwrap.fill((
-                "The `parameters` DataFrame defined in the user script must "
-                "have at least two free parameters defined. Found only"
-                f"`len(parameters) = {len(parameters)}`."
-            )))
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "The `parameters` DataFrame defined in the user script must "
+                        "have at least two free parameters defined. Found only"
+                        f"`len(parameters) = {len(parameters)}`."
+                    )
+                )
+            )
 
         columns_needed = ["value", "min", "max", "sigma"]
         if not all(c in parameters.columns for c in columns_needed):
-            raise ValueError(textwrap.fill((
-                "The `parameters` DataFrame defined in the user script must "
-                "have at least four columns defined: ['value', 'min', "
-                f"'max', 'sigma']. Found these: `{parameters.columns}`. You "
-                "can use the `coexist.create_parameters` function for this."
-            )))
-
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "The `parameters` DataFrame defined in the user script must "
+                        "have at least four columns defined: ['value', 'min', "
+                        f"'max', 'sigma']. Found these: `{parameters.columns}`. You "
+                        "can use the `coexist.create_parameters` function for this."
+                    )
+                )
+            )
 
     def setup_complete(self, population, target, seed):
-        '''Set up the final attributes before starting the ACCES run - i.e.
+        """Set up the final attributes before starting the ACCES run - i.e.
         the ones set in the ``Access.learn`` method.
-        '''
+        """
         # Type-checking inputs and setting attributes
         self.population = int(population)
         self.target = float(target)
@@ -240,10 +257,8 @@ class AccessSetup:
 
         self.rng = np.random.default_rng(self.seed)
 
-
     def starting_guess(self):
-        '''Return the initial parameter combinations to start CMA-ES with.
-        '''
+        """Return the initial parameter combinations to start CMA-ES with."""
         # First guess, scaled
         x0 = self.parameters_scaled["value"].to_numpy()
         bounds = [
@@ -254,11 +269,9 @@ class AccessSetup:
         return x0, bounds
 
 
-
-
 @autorepr
 class AccessPaths:
-    '''Structure handling IO and storing all paths relevant for an ACCES run.
+    """Structure handling IO and storing all paths relevant for an ACCES run.
 
     Loading and saving epochs and history are handled too.
 
@@ -290,7 +303,7 @@ class AccessPaths:
 
     history_scaled : str
         Path to the scaled historical CSV data file.
-    '''
+    """
 
     def __init__(
         self,
@@ -304,7 +317,6 @@ class AccessPaths:
         history: str = None,
         history_scaled: str = None,
     ):
-
         self.directory = directory
         self.results = results
         self.outputs = outputs
@@ -315,11 +327,10 @@ class AccessPaths:
         self.history = history
         self.history_scaled = history_scaled
 
-
     def create_directories(self, access):
-        '''Given a ``coexist.Access`` instance, create the required directory
+        """Given a ``coexist.Access`` instance, create the required directory
         hierarchy for a single ACCES run.
-        '''
+        """
         # Include the random seed used in the `access_seed<seed>` dirpath
         self.directory = f"access_seed{access.setup.seed}"
         self.results = os.path.join(self.directory, "results")
@@ -328,10 +339,9 @@ class AccessPaths:
         if access.verbose >= 3:
             now = datetime.now().strftime(r"%H:%M:%S on %d/%m/%Y")
             print(
-                "\n" + "=" * 80 + "\n" +
-                f"Starting ACCES run at {now} in directory "
+                "\n" + "=" * 80 + "\n" + f"Starting ACCES run at {now} in directory "
                 f"`{self.directory}`.",
-                flush = True,
+                flush=True,
             )
 
         # Include the population size in the history filename to ensure future
@@ -378,16 +388,21 @@ class AccessPaths:
         now = datetime.now().strftime("%H:%M:%S on %d/%m/%Y")
 
         logfile = os.path.join(self.directory, "loginfo.txt")
-        with open(logfile, "a", encoding = "utf-8") as f:
-            f.write((
-                80 * "-" + "\n" +
-                f"Starting ACCESS run at {now}\n\n" +
-                access.__repr__() + "\n"
-            ))
+        with open(logfile, "a", encoding="utf-8") as f:
+            f.write(
+                (
+                    80 * "-"
+                    + "\n"
+                    + f"Starting ACCESS run at {now}\n\n"
+                    + access.__repr__()
+                    + "\n"
+                )
+            )
 
         readmefile = os.path.join(self.directory, "readme.rst")
-        with open(readmefile, "w", encoding = "utf-8") as f:
-            f.write(textwrap.dedent(f'''
+        with open(readmefile, "w", encoding="utf-8") as f:
+            f.write(
+                textwrap.dedent(f"""
                 ACCES Optimisation Run Directory
                 --------------------------------
 
@@ -488,55 +503,54 @@ class AccessPaths:
                 The `outputs` and `results` directories are only needed for
                 logging purposes; you may safely remove the files inside *only
                 for the completed ACCES epochs*.
-            '''))
-
+            """)
+            )
 
     def update_paths(self, prefix):
-        '''Translate all paths saved in this class relative to a new `prefix`
+        """Translate all paths saved in this class relative to a new `prefix`
         (which will replace the `directory` attribute).
 
         Please ensure that the `prefix` directory contains the required ACCES
         files.
-        '''
+        """
 
         self.directory = prefix
-        for attr in ["results", "outputs", "script", "setup", "epochs",
-                     "epochs_scaled", "history", "history_scaled"]:
+        for attr in [
+            "results",
+            "outputs",
+            "script",
+            "setup",
+            "epochs",
+            "epochs_scaled",
+            "history",
+            "history_scaled",
+        ]:
             prev = getattr(self, attr)
             if isinstance(prev, str):
-                setattr(
-                    self,
-                    attr,
-                    os.path.join(prefix, os.path.split(prev)[1])
-                )
-
+                setattr(self, attr, os.path.join(prefix, os.path.split(prev)[1]))
 
     def save_history(self, setup, progress):
-        '''Given an ``AccessSetup`` and ``AccessProgress`` instance, save the
+        """Given an ``AccessSetup`` and ``AccessProgress`` instance, save the
         results history.
-        '''
+        """
         np.savetxt(
             self.history,
             progress.history,
-            header = " ".join(setup.parameters.index.to_list() + ["error"]),
+            header=" ".join(setup.parameters.index.to_list() + ["error"]),
         )
 
         np.savetxt(
             self.history_scaled,
             progress.history_scaled,
-            header = " ".join(setup.parameters.index.to_list() + ["error"]),
+            header=" ".join(setup.parameters.index.to_list() + ["error"]),
         )
 
-
     def load_history(self, access):
-        '''Load previous results into ``access.progress``.
-        '''
+        """Load previous results into ``access.progress``."""
         # History columns: [param1, param2, ..., error_value] for each function
         # evaluation
         if os.path.isfile(self.history):
-            access.progress.history = np.loadtxt(
-                self.history, dtype = float
-            )
+            access.progress.history = np.loadtxt(self.history, dtype=float)
         else:
             access.progress.history = None
 
@@ -545,89 +559,80 @@ class AccessPaths:
         if os.path.isfile(self.history_scaled):
             if access.verbose >= 3:
                 print(
-                    "Found previous ACCES results in " +
-                    f"`{self.history_scaled}`.\n" + "=" * 80 + "\n",
-                    flush = True,
+                    "Found previous ACCES results in "
+                    + f"`{self.history_scaled}`.\n"
+                    + "=" * 80
+                    + "\n",
+                    flush=True,
                 )
 
             access.progress.history_scaled = np.loadtxt(
-                self.history_scaled, dtype = float
+                self.history_scaled, dtype=float
             )
         else:
             access.progress.history_scaled = None
 
-
     def save_epochs(self, setup, progress):
-        '''Given an ``AccessSetup`` and ``AccessProgress`` instance, save the
+        """Given an ``AccessSetup`` and ``AccessProgress`` instance, save the
         optimisation epochs.
-        '''
+        """
         np.savetxt(
             self.epochs,
             progress.epochs,
-            header = " ".join(
-                [f"{p}_mean" for p in setup.parameters.index] +
-                [f"{p}_std" for p in setup.parameters.index] +
-                ["overall_std"]
+            header=" ".join(
+                [f"{p}_mean" for p in setup.parameters.index]
+                + [f"{p}_std" for p in setup.parameters.index]
+                + ["overall_std"]
             ),
         )
 
         np.savetxt(
             self.epochs_scaled,
             progress.epochs_scaled,
-            header = " ".join(
-                [f"{p}_mean" for p in setup.parameters.index] +
-                [f"{p}_std" for p in setup.parameters.index] +
-                ["overall_std"]
+            header=" ".join(
+                [f"{p}_mean" for p in setup.parameters.index]
+                + [f"{p}_std" for p in setup.parameters.index]
+                + ["overall_std"]
             ),
         )
 
-
     def load_epochs(self, access):
-        '''Given an ``Access`` instance, load previous ACCES runs' `epochs` and
+        """Given an ``Access`` instance, load previous ACCES runs' `epochs` and
         `epochs_scaled` into ``access.progress``.
-        '''
+        """
         # Epochs columns: [param1_mean, param2_mean, ..., param1_std,
         # param2_std,..., overall_std] for each epochs
         if os.path.isfile(self.epochs):
-            access.progress.epochs = np.loadtxt(
-                self.epochs, dtype = float
-            )
+            access.progress.epochs = np.loadtxt(self.epochs, dtype=float)
         else:
-            access.progress.epochs = np.empty(
-                (0, 2 * len(access.setup.parameters) + 1)
-            )
+            access.progress.epochs = np.empty((0, 2 * len(access.setup.parameters) + 1))
 
         if os.path.isfile(self.epochs_scaled):
-            access.progress.epochs_scaled = np.loadtxt(
-                self.epochs_scaled, dtype = float
-            )
+            access.progress.epochs_scaled = np.loadtxt(self.epochs_scaled, dtype=float)
         else:
             access.progress.epochs_scaled = np.empty(
                 (0, 2 * len(access.setup.parameters) + 1)
             )
 
-
     def copy(self):
-        '''Create a copy of an `AccessPaths` object.
-        '''
+        """Create a copy of an `AccessPaths` object."""
 
         return AccessPaths(
-            directory = self.directory,
-            results = self.results,
-            outputs = self.outputs,
-            script = self.script,
-            setup = self.setup,
-            epochs = self.epochs,
-            epochs_scaled = self.epochs_scaled,
-            history = self.history,
-            history_scaled = self.history_scaled,
+            directory=self.directory,
+            results=self.results,
+            outputs=self.outputs,
+            script=self.script,
+            setup=self.setup,
+            epochs=self.epochs,
+            epochs_scaled=self.epochs_scaled,
+            history=self.history,
+            history_scaled=self.history_scaled,
         )
 
 
-
-@autorepr(short = True)
+@autorepr(short=True)
 class AccessProgress:
-    '''Structure saving the current ACCES optimisation progress.
+    """Structure saving the current ACCES optimisation progress.
 
     The `epochs` array has columns [mean_param1, mean_param2, ..., std_param1,
     std_param2, ..., std_overall] for each epoch.
@@ -658,7 +663,7 @@ class AccessProgress:
 
     stderr: str = None
         The latest unique recorded stderr message.
-    '''
+    """
 
     def __init__(
         self,
@@ -676,29 +681,32 @@ class AccessProgress:
         self.stdout = None
         self.stderr = None
 
-
     def update_epochs(self, es, scaling):
-        '''Update each epoch array after an ACCES run has been completed.
-        '''
-        self.epochs = np.vstack((
-            self.epochs,
-            np.hstack((
-                es.result.xfavorite * scaling,
-                es.result.stds * scaling,
-                es.sigma,
-            )),
-        ))
+        """Update each epoch array after an ACCES run has been completed."""
+        self.epochs = np.vstack(
+            (
+                self.epochs,
+                np.hstack(
+                    (
+                        es.result.xfavorite * scaling,
+                        es.result.stds * scaling,
+                        es.sigma,
+                    )
+                ),
+            )
+        )
 
-        self.epochs_scaled = np.vstack((
-            self.epochs_scaled,
-            np.hstack([es.result.xfavorite, es.result.stds, es.sigma]),
-        ))
-
+        self.epochs_scaled = np.vstack(
+            (
+                self.epochs_scaled,
+                np.hstack([es.result.xfavorite, es.result.stds, es.sigma]),
+            )
+        )
 
     def update_history(self, es, scaling, solutions, results):
-        '''Update the ACCES history with the latest simulation solutions and
+        """Update the ACCES history with the latest simulation solutions and
         results.
-        '''
+        """
         solutions = np.asarray(solutions)
         current = np.c_[solutions * scaling, results]
         current_scaled = np.c_[solutions, results]
@@ -715,25 +723,30 @@ class AccessProgress:
 
         if np.isnan(self.history[:, -1]).all():
             # History does not have enough columns - pad with NaNs
-            pad = np.full((
-                self.history.shape[0],
-                current.shape[1] - self.history.shape[1],
-            ), np.nan)
+            pad = np.full(
+                (
+                    self.history.shape[0],
+                    current.shape[1] - self.history.shape[1],
+                ),
+                np.nan,
+            )
             history = np.c_[self.history, pad]
             history_scaled = np.c_[self.history_scaled, pad]
 
         if np.isnan(current[:, -1]).all():
             # Current does not have enough columns - pad with NaNs
-            pad = np.full((
-                current.shape[0],
-                self.history.shape[1] - current.shape[1],
-            ), np.nan)
+            pad = np.full(
+                (
+                    current.shape[0],
+                    self.history.shape[1] - current.shape[1],
+                ),
+                np.nan,
+            )
             current = np.c_[current, pad]
             current_scaled = np.c_[current_scaled, pad]
 
         self.history = np.vstack((history, current))
         self.history_scaled = np.vstack((history_scaled, current_scaled))
-
 
     def gather_results(
         self,
@@ -743,19 +756,19 @@ class AccessProgress:
         multi_objective,
         verbose,
     ):
-        '''Check whether the jobs have finished and retrieve the standard
+        """Check whether the jobs have finished and retrieve the standard
         deviation, errors and the combined total error.
-        '''
+        """
         results = []
         # stdout_rec = []
         # stderr_rec = []
         crashed = []
 
         # Occasionally check if jobs finished
-        wait = 0.1          # Time between checking results
-        waited = 0.         # Total time waited
-        logged = 0          # Number of times logged remaining simulations
-        tlog = 30 * 60      # Time until logging remaining simulations again
+        wait = 0.1  # Time between checking results
+        waited = 0.0  # Total time waited
+        logged = 0  # Number of times logged remaining simulations
+        tlog = 30 * 60  # Time until logging remaining simulations again
 
         while wait != 0:
             done = sum((p.poll() is not None for p in processes))
@@ -771,9 +784,9 @@ class AccessProgress:
                         with open(result_paths[i], "rb") as f:
                             errors = pickle.load(f)
                             if hasattr(errors, "__iter__"):
-                                errors = np.array(errors, dtype = float)
+                                errors = np.array(errors, dtype=float)
                             else:
-                                errors = np.array([errors], dtype = float)
+                                errors = np.array([errors], dtype=float)
 
                             combined = multi_objective.combine(errors)
                             results.append(np.append(errors, combined))
@@ -786,10 +799,9 @@ class AccessProgress:
                 logged += 1
                 tlog *= 1.5
 
-                remaining = " ".join([
-                    p.args[-1].split(".")[-2]
-                    for p in processes if p.poll() is None
-                ])
+                remaining = " ".join(
+                    [p.args[-1].split(".")[-2] for p in processes if p.poll() is None]
+                )
 
                 minutes = int(waited / 60)
                 if minutes > 60:
@@ -797,10 +809,13 @@ class AccessProgress:
                 else:
                     timer = f"{minutes} min"
 
-                print((
-                    f"  * Remaining jobs after {timer}:\n" +
-                    textwrap.indent(textwrap.fill(remaining), "  * ")
-                ), flush = True)
+                print(
+                    (
+                        f"  * Remaining jobs after {timer}:\n"
+                        + textwrap.indent(textwrap.fill(remaining), "  * ")
+                    ),
+                    flush=True,
+                )
 
             # Wait for increasing numbers of seconds until checking for results
             # again - at most 1 minute
@@ -811,11 +826,9 @@ class AccessProgress:
         return results, crashed
 
 
-
-
 @autorepr
 class Access:
-    '''Optimise an arbitrary user-defined script's parameters in parallel.
+    """Optimise an arbitrary user-defined script's parameters in parallel.
 
     A minimal user script - saved in a separate file - would be:
 
@@ -913,14 +926,14 @@ class Access:
     verbose : int, optional
         Integer denoting the level of verbosity, where 0 is quiet and 5 is
         maximally verbose.
-    '''
+    """
 
     def __init__(
         self,
         script_path: str,
-        scheduler = schedulers.LocalScheduler(),
+        scheduler=schedulers.LocalScheduler(),
     ):
-        '''`Access` class constructor.
+        """`Access` class constructor.
 
         Parameters
         ----------
@@ -938,7 +951,7 @@ class Access:
             interpreters on the local machine for executing the user's script.
             See the other schedulers in `coexist.schedulers` for e.g. spawning
             jobs on a supercomputing cluster.
-        '''
+        """
 
         # Creating class attributes
         self.setup = AccessSetup(script_path)
@@ -947,40 +960,51 @@ class Access:
 
         # Type-check scheduler
         if not isinstance(scheduler, schedulers.Scheduler):
-            raise TypeError(textwrap.fill((
-                "The input `scheduler` must be a subclass of `coexist."
-                f"schedulers.Scheduler`. Received {type(scheduler)}."
-            )))
+            raise TypeError(
+                textwrap.fill(
+                    (
+                        "The input `scheduler` must be a subclass of `coexist."
+                        f"schedulers.Scheduler`. Received {type(scheduler)}."
+                    )
+                )
+            )
         self.scheduler = scheduler
 
         # Will be set in `learn`
         self.multi_objective = None
         self.verbose = None
 
-
     def learn(
         self,
-        num_solutions = 8,
-        target_sigma = 0.1,
-        random_seed = None,
-        multi_objective = Product(),
-        verbose = 4,
+        num_solutions=8,
+        target_sigma=0.1,
+        random_seed=None,
+        multi_objective=Product(),
+        verbose=4,
+        pre_epoch=None,
+        post_epoch=None,
+        required_files=None,
+        required_folders=None,
     ):
-        '''Learn the free `parameters` from the user script that minimise the
+        """Learn the free `parameters` from the user script that minimise the
         `error` variable by trying `num_solutions` parameter combinations at
         a time until the overall uncertainty becomes lower than `target_sigma`.
 
         For `multi_objective` optimisation, use a `coexist.combiner` to combine
         multiple error values into a single one.
-        '''
+        """
 
         # Type-checking inputs
         if not hasattr(multi_objective, "combine"):
-            raise TypeError(textwrap.fill((
-                "The input `mulit_objective` has no attribute `combine`. "
-                "Check you are using a `coexist.combiner` to combine "
-                "multiple error values into a single combined error."
-            )))
+            raise TypeError(
+                textwrap.fill(
+                    (
+                        "The input `mulit_objective` has no attribute `combine`. "
+                        "Check you are using a `coexist.combiner` to combine "
+                        "multiple error values into a single combined error."
+                    )
+                )
+            )
 
         # Set last setup attributes and create ACCES directories
         self.verbose = int(verbose)
@@ -990,6 +1014,21 @@ class Access:
 
         # Save this ACCES run's files
         self.save_setup()
+        print(self.paths.directory)
+        if pre_epoch is not None:
+            shutil.copy(pre_epoch, os.path.join(self.paths.directory, pre_epoch))
+        if post_epoch is not None:
+            shutil.copy(post_epoch, os.path.join(self.paths.directory, post_epoch))
+        if required_folders is not None:
+            for folder in required_folders:
+                shutil.copytree(
+                    folder,
+                    os.path.join(self.paths.directory, folder),
+                    dirs_exist_ok=True,
+                )
+        if required_files is not None:
+            for file in required_files:
+                shutil.copy(file, os.path.join(self.paths.directory, file))
 
         # Load previous history and epochs into self.progress
         self.paths.load_history(self)
@@ -998,22 +1037,26 @@ class Access:
         # Scale sigma, bounds, solutions, results to unit variance
         scaling = self.setup.scaling
         x0, bounds = self.setup.starting_guess()
-        sigma0 = 1.
+        sigma0 = 1.0
 
         # Instantiate CMA-ES optimiser; silence initial CMA-ES message
-        with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), \
-                warnings.catch_warnings():
-
+        with open(os.devnull, "w") as f, contextlib.redirect_stdout(
+            f
+        ), warnings.catch_warnings():
             # CMA-ES sometimes warns about changing the initial standard
             # deviation; ACCES users don't control that, so we can hide it
             warnings.simplefilter("ignore", UserWarning)
 
-            es = cma.CMAEvolutionStrategy(x0, sigma0, dict(
-                bounds = bounds,
-                popsize = self.setup.population,
-                randn = lambda *args: self.setup.rng.standard_normal(args),
-                verbose = 3 if self.verbose >= 3 else -9,
-            ))
+            es = cma.CMAEvolutionStrategy(
+                x0,
+                sigma0,
+                dict(
+                    bounds=bounds,
+                    popsize=self.setup.population,
+                    randn=lambda *args: self.setup.rng.standard_normal(args),
+                    verbose=3 if self.verbose >= 3 else -9,
+                ),
+            )
             es.logger = cma.CMADataLogger(
                 os.path.join(self.paths.directory, "cache", "")
             )
@@ -1041,8 +1084,20 @@ class Access:
             # Save current epoch's mean, sigma
             self.progress.update_epochs(es, scaling)
 
+            # Run any pre-requisites for an epoch            
+            if pre_epoch is not None:
+                print(f"Executing pre-epoch script: {pre_epoch}")
+                self.execute_global_script(pre_epoch, solutions * scaling, epoch, "pre")
+
             # Evaluate each solution - i.e. run simulations in parallel
             results = self.evaluate_solutions(solutions * scaling, epoch)
+
+            # Run any post-requisites for an epoch            
+            if post_epoch is not None:
+                print(f"Executing post-epoch script: {post_epoch}")
+                self.execute_global_script(
+                    post_epoch, solutions * scaling, epoch, "post"
+                )
 
             # We already warn about crashed simulations, so hide CMA-ES ones
             with warnings.catch_warnings():
@@ -1064,89 +1119,156 @@ class Access:
                 break
 
         if es.result.xbest is None:
-            raise ValueError(textwrap.fill((
-                "No parameter combination was evaluated successfully. All "
-                "simulations crashed - please check the error logs in the "
-                f"`{self.paths.outputs}` folder."
-            )))
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "No parameter combination was evaluated successfully. All "
+                        "simulations crashed - please check the error logs in the "
+                        f"`{self.paths.outputs}` folder."
+                    )
+                )
+            )
 
         if self.verbose >= 1:
             self.print_finished(es, scaling)
 
         return AccessData.read(self.paths.directory)
 
+    def execute_global_script(self, script, solutions, epoch, order):
+        """Execute a global script before and after each epoch."""
+        # Aliases
+        param_names = self.setup.parameters.index
+        pop = self.setup.population
+        start_index = epoch * pop
+        output_file = open(
+            os.path.join(self.paths.outputs, f"{order}_epoch.{epoch}.log"),
+            "w",
+        )
+        parameters_paths = [
+            os.path.join(
+                self.paths.results,
+                f"parameters.{start_index + i}.pickle",
+            )
+            for i in range(pop)
+        ]
+        try:
+            signal_handler.set()
+            parameters = self.setup.parameters.copy()
+            for i, sol in enumerate(solutions):
+                # Create new set of parameters and save them to disk
+                parameters = self.setup.parameters.copy()
+
+                for j, sol_val in enumerate(sol):
+                    parameters.at[param_names[j], "value"] = sol_val
+
+                with open(parameters_paths[i], "wb") as f:
+                    pickle.dump(parameters, f)
+
+            # Get job scheduling command
+            scheduler_cmd = self.scheduler.schedule(
+                self.paths.directory,
+                start_index + i,
+            )
+
+            # subprocess.run automatically waits for the process to finish
+            proc = subprocess.run(
+                scheduler_cmd
+                + [
+                    os.path.join(self.paths.directory, script),
+                    f"{epoch}",  # Epoch number
+                    f"{pop}",  # Population size
+                    self.paths.directory,  # ACCES directory
+                ],
+                stdout=output_file,
+                stderr=subprocess.STDOUT,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    textwrap.fill(
+                        (
+                            f"Error executing {order}-epoch script {script}. "
+                            f"Return code: {proc.returncode}."
+                        )
+                    )
+                )
+
+        except KeyboardInterrupt:
+            proc.kill()
+
+            raise
+
+        finally:
+            signal_handler.unset()
 
     def save_setup(self):
-        '''Save current ACCES run's modified script (py) and state (toml).
-        '''
+        """Save current ACCES run's modified script (py) and state (toml)."""
 
         with open(self.paths.script, "w") as f:
             f.write(self.setup.script)
 
         setup_dict = dict(
-            paths = self.paths.__dict__,
-            setup = dict(
-                parameters = self.setup.parameters.to_dict(),
-                parameters_scaled = self.setup.parameters_scaled.to_dict(),
-                scaling = self.setup.scaling.tolist(),
-                population = self.setup.population,
-                target = self.setup.target,
-                seed = self.setup.seed,
+            paths=self.paths.__dict__,
+            setup=dict(
+                parameters=self.setup.parameters.to_dict(),
+                parameters_scaled=self.setup.parameters_scaled.to_dict(),
+                scaling=self.setup.scaling.tolist(),
+                population=self.setup.population,
+                target=self.setup.target,
+                seed=self.setup.seed,
             ),
         )
 
         with open(self.paths.setup, "w") as f:
             toml.dump(setup_dict, f)
 
-
     def has_historical(self, epoch):
-        '''Check ACCES still has historical solutions to inject.
-        '''
+        """Check ACCES still has historical solutions to inject."""
 
         if (
-            self.progress.history_scaled is not None and
-            epoch * self.setup.population < len(self.progress.history_scaled)
+            self.progress.history_scaled is not None
+            and epoch * self.setup.population < len(self.progress.history_scaled)
         ):
             return True
         return False
 
-
     def inject_historical(self, es, epoch):
-        '''Inject the CMA-ES optimiser with pre-computed (historical) results.
+        """Inject the CMA-ES optimiser with pre-computed (historical) results.
         The solutions must have a Gaussian distribution in each problem
         dimension - though the standard deviation can vary for each of them.
         Ideally, this should only use historical values that CMA-ES asked for
         in a previous ACCESS run.
-        '''
+        """
 
         pop = self.setup.population
         num_params = len(self.setup.parameters)
 
         results_scaled = self.progress.history_scaled[
-            (epoch * pop):(epoch * pop + pop)
+            (epoch * pop) : (epoch * pop + pop)
         ]
         es.tell(results_scaled[:, :num_params], results_scaled[:, -1])
 
         if self.verbose >= 1:
             ns = len(self.progress.history_scaled)
             maxlen = len(str(ns))
-            print((
-                f"Injected {(epoch + 1) * len(results_scaled):>{maxlen}} / "
-                f"{ns} historical solutions"
-            ))
-
+            print(
+                (
+                    f"Injected {(epoch + 1) * len(results_scaled):>{maxlen}} / "
+                    f"{ns} historical solutions"
+                )
+            )
 
     def print_before_eval(self, es, epoch, scaling):
-        '''Print current estimates before evaluating current epoch.
-        '''
+        """Print current estimates before evaluating current epoch."""
         info = pd.DataFrame(
-            np.vstack((
-                es.result.xfavorite * scaling,
-                es.result.stds * scaling,
-                es.result.stds,
-            )),
-            index = ["estimate", "uncertainty", "scaled_std"],
-            columns = self.setup.parameters.index,
+            np.vstack(
+                (
+                    es.result.xfavorite * scaling,
+                    es.result.stds * scaling,
+                    es.result.stds,
+                )
+            ),
+            index=["estimate", "uncertainty", "scaled_std"],
+            columns=self.setup.parameters.index,
         )
 
         # Display all the DataFrame columns and rows
@@ -1179,42 +1301,44 @@ class Access:
 
             since_str = f" | Since Last {elapsed_str}"
 
-        print((
-            f"{head}\n"
-            f"Epoch {epoch:>4} | Population {self.setup.population:>4} | "
-            f"Time {now_str}{since_str}\n"
-            f"{line}\n"
-            f"Scaled overall standard deviation: {es.sigma}\n"
-            f"{info}\n"
-        ), flush = True)
+        print(
+            (
+                f"{head}\n"
+                f"Epoch {epoch:>4} | Population {self.setup.population:>4} | "
+                f"Time {now_str}{since_str}\n"
+                f"{line}\n"
+                f"Scaled overall standard deviation: {es.sigma}\n"
+                f"{info}\n"
+            ),
+            flush=True,
+        )
 
         pd.set_option("display.max_columns", old_max_columns)
         pd.set_option("display.max_rows", old_max_rows)
 
-
     def print_status_eval(self, crashed):
-        '''Print logged stdout and stderr messages and crashed simulations
+        """Print logged stdout and stderr messages and crashed simulations
         after evaluating an epoch.
-        '''
+        """
 
         if len(crashed):
             line = "-" * 80
 
-            crashed_str = textwrap.fill(" ".join(
-                str(c) for c in crashed
-            ))
+            crashed_str = textwrap.fill(" ".join(str(c) for c in crashed))
 
             print(
-                line + "\n" +
-                "No results were found for these jobs:\n" +
-                textwrap.indent(crashed_str, "  ") + "\n" +
-                "They crashed or terminated early; for details, check the "
+                line
+                + "\n"
+                + "No results were found for these jobs:\n"
+                + textwrap.indent(crashed_str, "  ")
+                + "\n"
+                + "They crashed or terminated early; for details, check the "
                 f"output logs in:\n  {self.paths.outputs}\n"
-                "The error values for these simulations were set to NaN.\n" +
-                line + "\n",
-                flush = True,
+                "The error values for these simulations were set to NaN.\n"
+                + line
+                + "\n",
+                flush=True,
             )
-
 
     def print_after_eval(
         self,
@@ -1224,21 +1348,23 @@ class Access:
         scaling,
         results,
     ):
-        '''Display parameter combinations evaluated in the current epoch and
+        """Display parameter combinations evaluated in the current epoch and
         the corresponding errors found.
-        '''
+        """
         # Display evaluation results: solutions, error values, etc.
         sols_results = np.c_[solutions * scaling, results]
-        cols = self.setup.parameters.index.to_list() + [
-            f"error{i}" for i in range(results.shape[1] - 1)
-        ] + ["error"]
+        cols = (
+            self.setup.parameters.index.to_list()
+            + [f"error{i}" for i in range(results.shape[1] - 1)]
+            + ["error"]
+        )
 
         # Store solutions and results in a DataFrame for easy pretty printing
         pop = len(results)
         sols_results = pd.DataFrame(
-            data = sols_results,
-            columns = cols,
-            index = range(epoch * pop - pop, epoch * pop),
+            data=sols_results,
+            columns=cols,
+            index=range(epoch * pop - pop, epoch * pop),
         )
 
         # Display all the DataFrame columns and rows
@@ -1248,19 +1374,21 @@ class Access:
         pd.set_option("display.max_columns", None)
         pd.set_option("display.max_rows", None)
 
-        print((
-            f"{sols_results}\n"
-            f"Total function evaluations: {es.result.evaluations}\n"
-        ), flush = True)
+        print(
+            (
+                f"{sols_results}\n"
+                f"Total function evaluations: {es.result.evaluations}\n"
+            ),
+            flush=True,
+        )
 
         pd.set_option("display.max_columns", old_max_columns)
         pd.set_option("display.max_rows", old_max_rows)
 
-
     def print_finished(self, es, scaling):
-        '''Display final message after successful convergence on optimum
+        """Display final message after successful convergence on optimum
         parameters.
-        '''
+        """
         solutions = list(es.result.xbest * scaling) + [es.result.fbest]
         stds = list(es.result.stds * scaling) + [" "]
         proc = os.path.join(
@@ -1270,53 +1398,60 @@ class Access:
 
         info = pd.DataFrame(
             [solutions, stds],
-            index = ["value", "sigma"],
-            columns = self.setup.parameters.index.to_list() + ["error"],
+            index=["value", "sigma"],
+            columns=self.setup.parameters.index.to_list() + ["error"],
         )
 
         line = "=" * 80
-        print((
-            f"\n{line}\n"
-            f"The best result was found in {es.result.iterations} epochs:\n"
-            f"{textwrap.indent(str(info), '  ')}\n\n"
-            "These results were found for the job:\n"
-            f"  {proc}\n"
-            f"{line}"
-        ), flush = True)
-
+        print(
+            (
+                f"\n{line}\n"
+                f"The best result was found in {es.result.iterations} epochs:\n"
+                f"{textwrap.indent(str(info), '  ')}\n\n"
+                "These results were found for the job:\n"
+                f"  {proc}\n"
+                f"{line}"
+            ),
+            flush=True,
+        )
 
     def finished(self, es):
-        '''Check if the optimisation run is done and display the best solution
+        """Check if the optimisation run is done and display the best solution
         found for the target sigma value.
-        '''
+        """
 
         # If overall sigma went below target
         if es.sigma < self.setup.target:
             if self.verbose >= 1:
-                print((
-                    "\nOptimal solution found within `target_sigma`, i.e. "
-                    f"{self.setup.target * 100}%:\n"
-                    f"  sigma = {es.sigma} < {self.setup.target}"
-                ), flush = True)
+                print(
+                    (
+                        "\nOptimal solution found within `target_sigma`, i.e. "
+                        f"{self.setup.target * 100}%:\n"
+                        f"  sigma = {es.sigma} < {self.setup.target}"
+                    ),
+                    flush=True,
+                )
             return True
 
         # If all individual sigmas went below target
         if np.all(es.result.stds < self.setup.target):
             if self.verbose >= 1:
-                print((
-                    "\nAll parameters found within `target_sigma`, i.e. "
-                    f"{self.setup.target * 100}%:\n"
-                    f"  scaled_std = {es.result.stds} < {self.setup.target}"
-                ), flush = True)
+                print(
+                    (
+                        "\nAll parameters found within `target_sigma`, i.e. "
+                        f"{self.setup.target * 100}%:\n"
+                        f"  scaled_std = {es.result.stds} < {self.setup.target}"
+                    ),
+                    flush=True,
+                )
             return True
 
         return False
 
-
     def evaluate_solutions(self, solutions, epoch):
-        '''Evaluate the parameter combinations given in `solutions` for the
+        """Evaluate the parameter combinations given in `solutions` for the
         current `epoch` in parallel.
-        '''
+        """
 
         # Aliases
         param_names = self.setup.parameters.index
@@ -1334,24 +1469,24 @@ class Access:
             os.path.join(
                 self.paths.results,
                 f"parameters.{start_index + i}.pickle",
-            ) for i in range(pop)
+            )
+            for i in range(pop)
         ]
 
         result_paths = [
             os.path.join(
                 self.paths.results,
                 f"result.{start_index + i}.pickle",
-            ) for i in range(pop)
+            )
+            for i in range(pop)
         ]
 
         output_files = [
             open(
-                os.path.join(
-                    self.paths.outputs,
-                    f"output.{start_index + i}.log"
-                ),
+                os.path.join(self.paths.outputs, f"output.{start_index + i}.log"),
                 "w",
-            ) for i in range(pop)
+            )
+            for i in range(pop)
         ]
 
         # Catch the KeyboardInterrupt (Ctrl-C) signal to shut down the spawned
@@ -1378,13 +1513,14 @@ class Access:
 
                 processes.append(
                     subprocess.Popen(
-                        scheduler_cmd + [
+                        scheduler_cmd
+                        + [
                             self.paths.script,
                             parameters_paths[i],
                             result_paths[i],
                         ],
-                        stdout = output_files[i],
-                        stderr = subprocess.STDOUT,
+                        stdout=output_files[i],
+                        stderr=subprocess.STDOUT,
                     )
                 )
 
@@ -1421,11 +1557,15 @@ class Access:
                     continue
 
                 if len(res) != num_errors:
-                    raise ValueError(textwrap.fill((
-                        f"The simulation at index {start_index + i} returned "
-                        f"{len(res) - 1} error values, while previous "
-                        f"simulations had {num_errors - 1} error values."
-                    )))
+                    raise ValueError(
+                        textwrap.fill(
+                            (
+                                f"The simulation at index {start_index + i} returned "
+                                f"{len(res) - 1} error values, while previous "
+                                f"simulations had {num_errors - 1} error values."
+                            )
+                        )
+                    )
 
         # Substitute results that are None (i.e. crashed) with rows of NaNs
         for i in range(len(results)):
@@ -1435,16 +1575,12 @@ class Access:
         return np.array(results)
 
 
-
-
 class AccessFileNotFoundLegacy:
     pass
 
 
-
-
 class AccessData:
-    '''Access (pun intended) data generated by a ``coexist.Access`` run; read
+    """Access (pun intended) data generated by a ``coexist.Access`` run; read
     it in using ``coexist.AccessData.read("access_seed<seed>")``.
 
     Attributes
@@ -1519,13 +1655,13 @@ class AccessData:
                    ╎           fp3_std, overall_std)
     results        ╎ DataFrame(fp1, fp2, fp3, error)
     results_scaled ╎ DataFrame(fp1, fp2, fp3, error)
-    '''
+    """
 
-    def __init__(self, access_path = "."):
-        '''Read in data generated by ``coexist.Access``; the `access_path` can
+    def __init__(self, access_path="."):
+        """Read in data generated by ``coexist.Access``; the `access_path` can
         be either the "`access_info_<hash>`" directory itself, or its
         parent directory.
-        '''
+        """
 
         access_path = find_access_path(access_path)
 
@@ -1544,9 +1680,7 @@ class AccessData:
         paths = AccessPaths(**setup_dict["paths"])
         paths.update_paths(access_path)
 
-        parameters = pd.DataFrame.from_dict(
-            setup_dict["setup"]["parameters"]
-        )
+        parameters = pd.DataFrame.from_dict(setup_dict["setup"]["parameters"])
         parameters_scaled = pd.DataFrame.from_dict(
             setup_dict["setup"]["parameters_scaled"]
         )
@@ -1556,41 +1690,46 @@ class AccessData:
         seed = setup_dict["setup"]["seed"]
 
         history = np.loadtxt(paths.history)
-        columns = parameters.index.to_list() + [
-            f"error{i}"
-            for i in range(history.shape[1] - len(parameters) - 1)
-        ] + ["error"]
-        results = pd.DataFrame(history, columns = columns, dtype = float)
+        columns = (
+            parameters.index.to_list()
+            + [f"error{i}" for i in range(history.shape[1] - len(parameters) - 1)]
+            + ["error"]
+        )
+        results = pd.DataFrame(history, columns=columns, dtype=float)
 
         history_scaled = np.loadtxt(paths.history_scaled)
-        columns_scaled = parameters.index.to_list() + [
-            f"error{i}"
-            for i in range(history_scaled.shape[1] - len(parameters) - 1)
-        ] + ["error"]
+        columns_scaled = (
+            parameters.index.to_list()
+            + [
+                f"error{i}"
+                for i in range(history_scaled.shape[1] - len(parameters) - 1)
+            ]
+            + ["error"]
+        )
         results_scaled = pd.DataFrame(
             history_scaled,
-            columns = columns_scaled,
-            dtype = float,
+            columns=columns_scaled,
+            dtype=float,
         )
 
         epochs = pd.DataFrame(
             np.loadtxt(paths.epochs),
-            columns = (
-                [f"{p}_mean" for p in parameters.index] +
-                [f"{p}_std" for p in parameters.index] +
-                ["overall_std"]
+            columns=(
+                [f"{p}_mean" for p in parameters.index]
+                + [f"{p}_std" for p in parameters.index]
+                + ["overall_std"]
             ),
-            dtype = float,
+            dtype=float,
         )
 
         epochs_scaled = pd.DataFrame(
             np.loadtxt(paths.epochs_scaled),
-            columns = (
-                [f"{p}_mean" for p in parameters.index] +
-                [f"{p}_std" for p in parameters.index] +
-                ["overall_std"]
+            columns=(
+                [f"{p}_mean" for p in parameters.index]
+                + [f"{p}_std" for p in parameters.index]
+                + ["overall_std"]
             ),
-            dtype = float,
+            dtype=float,
         )
 
         num_epochs = len(epochs)
@@ -1598,14 +1737,12 @@ class AccessData:
         # Set parameters' values to the best results
         ns = len(parameters)
         parameters["value"] = results.iloc[results["error"].idxmin()][:-1]
-        parameters["sigma"] = epochs.iloc[-1, ns:ns + ns].to_numpy()
+        parameters["sigma"] = epochs.iloc[-1, ns : ns + ns].to_numpy()
 
         parameters_scaled["value"] = results_scaled.iloc[
             results_scaled["error"].idxmin()
         ][:-1]
-        parameters_scaled["sigma"] = epochs_scaled.iloc[
-            -1, ns:ns + ns
-        ].to_numpy()
+        parameters_scaled["sigma"] = epochs_scaled.iloc[-1, ns : ns + ns].to_numpy()
 
         # Set class attributes
         self.paths = paths
@@ -1621,10 +1758,9 @@ class AccessData:
         self.results = results
         self.results_scaled = results_scaled
 
-
     @staticmethod
     def empty():
-        '''Create an empty `AccessData` object that you can set attributes
+        """Create an empty `AccessData` object that you can set attributes
         to directly.
 
         Examples
@@ -1633,36 +1769,37 @@ class AccessData:
 
         >>> import coexist
         >>> data = coexist.AccessData.empty()
-        '''
+        """
         return AccessData.__new__(AccessData)
 
-
     @staticmethod
-    def read(access_path = "."):
-        '''Read in data generated by ``coexist.Access``; the `access_path` can
+    def read(access_path="."):
+        """Read in data generated by ``coexist.Access``; the `access_path` can
         be either the "`access_seed<hash>`" directory itself, or its
         parent directory.
 
         Here for backwards-compatibility; you can instantiate the class
         directly with the ``access_path``, e.g. ``AccessData(".")``.
-        '''
+        """
 
         return AccessData(access_path)
 
-
     def legacy(self, access_path):
-        '''Read in data from legacy coexist-0.1.0 ACCES format; this is
+        """Read in data from legacy coexist-0.1.0 ACCES format; this is
         normally called automatically by ``AccessData.read``.
-        '''
+        """
 
         # Check all legacy files exist
         legacy_files = ["access_code.py", "access_info.pickle"]
-        if any(not os.path.isfile(os.path.join(access_path, f))
-               for f in legacy_files):
-            raise FileNotFoundError(textwrap.fill((
-                f"The legacy AccessData files `{legacy_files}` were not found "
-                f"in `{access_path}`."
-            )))
+        if any(not os.path.isfile(os.path.join(access_path, f)) for f in legacy_files):
+            raise FileNotFoundError(
+                textwrap.fill(
+                    (
+                        f"The legacy AccessData files `{legacy_files}` were not found "
+                        f"in `{access_path}`."
+                    )
+                )
+            )
 
         # Find legacy history file
         history_finder = re.compile(r"opt_history_[0-9]+\.csv")
@@ -1670,17 +1807,13 @@ class AccessData:
         for f in os.listdir(access_path):
             if history_finder.search(f):
                 history_path = os.path.join(access_path, f)
-                history_scaled_path = (
-                    history_path.split(".csv")[0] + "_scaled.csv"
-                )
-                num_solutions = int(
-                    re.split(r"opt_history_|\.csv", history_path)[1]
-                )
+                history_scaled_path = history_path.split(".csv")[0] + "_scaled.csv"
+                num_solutions = int(re.split(r"opt_history_|\.csv", history_path)[1])
                 break
         else:
-            raise FileNotFoundError(textwrap.fill((
-                f"No legacy history file was found in `{access_path}`."
-            )))
+            raise FileNotFoundError(
+                textwrap.fill((f"No legacy history file was found in `{access_path}`."))
+            )
 
         with open(os.path.join(access_path, "access_info.pickle"), "rb") as f:
             access_info = pickle.load(f)
@@ -1692,15 +1825,15 @@ class AccessData:
         notfound = AccessFileNotFoundLegacy()
 
         paths = AccessPaths(
-            directory = access_path,
-            results = os.path.join(access_path, "simulations"),
-            outputs = os.path.join(access_path, "outputs"),
-            script = os.path.join(access_path, "access_code.py"),
-            setup = notfound,
-            epochs = notfound,
-            epochs_scaled = notfound,
-            history = history_path,
-            history_scaled = history_scaled_path,
+            directory=access_path,
+            results=os.path.join(access_path, "simulations"),
+            outputs=os.path.join(access_path, "outputs"),
+            script=os.path.join(access_path, "access_code.py"),
+            setup=notfound,
+            epochs=notfound,
+            epochs_scaled=notfound,
+            history=history_path,
+            history_scaled=history_scaled_path,
         )
 
         parameters = access_info.parameters
@@ -1715,69 +1848,71 @@ class AccessData:
 
         scaling = np.mean(
             history[:, :nparams] / history_scaled[:, :nparams],
-            axis = 0,
+            axis=0,
         )
         parameters_scaled = parameters.copy()
         for i in range(len(parameters_scaled.columns)):
             parameters_scaled.iloc[:, i] /= scaling
 
         # Infer epochs data
-        means = np.array([
-            history[i * pop:i * pop + pop, :nparams].mean(axis = 0)
-            for i in range(num_epochs)
-        ])
-        stds = history[::pop, nparams:2 * nparams]
+        means = np.array(
+            [
+                history[i * pop : i * pop + pop, :nparams].mean(axis=0)
+                for i in range(num_epochs)
+            ]
+        )
+        stds = history[::pop, nparams : 2 * nparams]
         overall_stds = history[::pop, -2]
         epochs = pd.DataFrame(
             np.c_[means, stds, overall_stds],
-            columns = (
-                [f"{p}_mean" for p in parameters.index] +
-                [f"{p}_std" for p in parameters.index] +
-                ["overall_std"]
+            columns=(
+                [f"{p}_mean" for p in parameters.index]
+                + [f"{p}_std" for p in parameters.index]
+                + ["overall_std"]
             ),
-            dtype = float,
+            dtype=float,
         )
 
-        means = np.array([
-            history_scaled[i * pop:i * pop + pop, :nparams].mean(axis = 0)
-            for i in range(num_epochs)
-        ])
-        stds = history_scaled[::pop, nparams:2 * nparams]
+        means = np.array(
+            [
+                history_scaled[i * pop : i * pop + pop, :nparams].mean(axis=0)
+                for i in range(num_epochs)
+            ]
+        )
+        stds = history_scaled[::pop, nparams : 2 * nparams]
         overall_stds = history_scaled[::pop, -2]
         epochs_scaled = pd.DataFrame(
             np.c_[means, stds, overall_stds],
-            columns = (
-                [f"{p}_mean" for p in parameters.index] +
-                [f"{p}_std" for p in parameters.index] +
-                ["overall_std"]
+            columns=(
+                [f"{p}_mean" for p in parameters.index]
+                + [f"{p}_std" for p in parameters.index]
+                + ["overall_std"]
             ),
-            dtype = float,
+            dtype=float,
         )
 
         # Translate history data
         results = pd.DataFrame(
             history[:, list(range(nparams)) + [-1]],
-            columns = parameters.index.to_list() + ["error"],
-            dtype = float,
+            columns=parameters.index.to_list() + ["error"],
+            dtype=float,
         )
 
         results_scaled = pd.DataFrame(
             history_scaled[:, list(range(nparams)) + [-1]],
-            columns = parameters.index.to_list() + ["error"],
-            dtype = float,
+            columns=parameters.index.to_list() + ["error"],
+            dtype=float,
         )
 
         # Set parameters' values to the best results
         ns = len(parameters)
         parameters["value"] = results.iloc[results["error"].idxmin()][:-1]
-        parameters["sigma"] = epochs.iloc[-1, ns:ns + ns].to_numpy()
+        parameters["sigma"] = epochs.iloc[-1, ns : ns + ns].to_numpy()
 
         parameters_scaled["value"] = results_scaled.iloc[
             results_scaled["error"].idxmin()
         ][:-1]
-        parameters_scaled["sigma"] = epochs_scaled.iloc[
-            -1, ns:ns + ns
-        ].to_numpy()
+        parameters_scaled["sigma"] = epochs_scaled.iloc[-1, ns : ns + ns].to_numpy()
 
         # Set class attributes
         self.paths = paths
@@ -1793,10 +1928,8 @@ class AccessData:
         self.results = results
         self.results_scaled = results_scaled
 
-
     def copy(self):
-        '''Return copy of `AccessData` object.
-        '''
+        """Return copy of `AccessData` object."""
         data = AccessData.empty()
         data.paths = self.paths.copy()
         data.parameters = self.parameters.copy()
@@ -1812,10 +1945,8 @@ class AccessData:
         data.results_scaled = self.results_scaled.copy()
         return data
 
-
     def save(self, dirname):
-        '''Save `AccessData` to a new directory at `dirname`.
-        '''
+        """Save `AccessData` to a new directory at `dirname`."""
         # Copy previous folder to new location
         shutil.copytree(self.paths.directory, dirname)
 
@@ -1823,59 +1954,60 @@ class AccessData:
 
         # Save history
         to_pad = len(self.results.columns) - len(self.parameters) - 1
-        columns = self.parameters.index.to_list() + [
-            f"error{i}" for i in range(to_pad)
-        ] + ["error"]
+        columns = (
+            self.parameters.index.to_list()
+            + [f"error{i}" for i in range(to_pad)]
+            + ["error"]
+        )
 
         np.savetxt(
             self.paths.history,
             self.results.to_numpy(),
-            header = " ".join(columns),
+            header=" ".join(columns),
         )
 
         np.savetxt(
             self.paths.history_scaled,
             self.results_scaled.to_numpy(),
-            header = " ".join(columns),
+            header=" ".join(columns),
         )
 
         # Save epochs
         np.savetxt(
             self.paths.epochs,
             self.epochs.to_numpy(),
-            header = " ".join(
-                [f"{p}_mean" for p in self.parameters.index] +
-                [f"{p}_std" for p in self.parameters.index] +
-                ["overall_std"]
+            header=" ".join(
+                [f"{p}_mean" for p in self.parameters.index]
+                + [f"{p}_std" for p in self.parameters.index]
+                + ["overall_std"]
             ),
         )
 
         np.savetxt(
             self.paths.epochs_scaled,
             self.epochs_scaled.to_numpy(),
-            header = " ".join(
-                [f"{p}_mean" for p in self.parameters.index] +
-                [f"{p}_std" for p in self.parameters.index] +
-                ["overall_std"]
+            header=" ".join(
+                [f"{p}_mean" for p in self.parameters.index]
+                + [f"{p}_std" for p in self.parameters.index]
+                + ["overall_std"]
             ),
         )
 
         # Save setup
         setup_dict = dict(
-            paths = self.paths.__dict__,
-            setup = dict(
-                parameters = self.parameters.to_dict(),
-                parameters_scaled = self.parameters_scaled.to_dict(),
-                scaling = self.scaling.tolist(),
-                population = self.population,
-                target = self.target,
-                seed = self.seed,
+            paths=self.paths.__dict__,
+            setup=dict(
+                parameters=self.parameters.to_dict(),
+                parameters_scaled=self.parameters_scaled.to_dict(),
+                scaling=self.scaling.tolist(),
+                population=self.population,
+                target=self.target,
+                seed=self.seed,
             ),
         )
 
         with open(self.paths.setup, "w") as f:
             toml.dump(setup_dict, f)
-
 
     def __getitem__(self, index):
         # Select AccessData epochs
@@ -1885,29 +2017,37 @@ class AccessData:
                 index += self.num_epochs
 
             if index >= self.num_epochs:
-                raise IndexError(textwrap.fill((
-                    f"The index=`{index}` is out of bounds for AccessData "
-                    f"with {self.num_epochs} epochs."
-                )))
+                raise IndexError(
+                    textwrap.fill(
+                        (
+                            f"The index=`{index}` is out of bounds for AccessData "
+                            f"with {self.num_epochs} epochs."
+                        )
+                    )
+                )
 
             data = self.copy()
             data.num_epochs = 1
-            data.epochs = self.epochs.iloc[index:index + 1]
-            data.epochs_scaled = self.epochs_scaled.iloc[index:index + 1]
+            data.epochs = self.epochs.iloc[index : index + 1]
+            data.epochs_scaled = self.epochs_scaled.iloc[index : index + 1]
             data.results = self.results.iloc[
-                index * self.population:(index + 1) * self.population
+                index * self.population : (index + 1) * self.population
             ]
             data.results_scaled = self.results_scaled.iloc[
-                index * self.population:(index + 1) * self.population
+                index * self.population : (index + 1) * self.population
             ]
             return data
 
         elif isinstance(index, slice):
             if index.step is not None and index.step != 1:
-                raise ValueError(textwrap.fill((
-                    "Indexing with a `slice.step` is not yet available. "
-                    "If this would be useful for you please get in touch."
-                )))
+                raise ValueError(
+                    textwrap.fill(
+                        (
+                            "Indexing with a `slice.step` is not yet available. "
+                            "If this would be useful for you please get in touch."
+                        )
+                    )
+                )
 
             start = index.start if index.start is not None else 0
             stop = index.stop if index.stop is not None else self.num_epochs
@@ -1919,46 +2059,54 @@ class AccessData:
             while stop < 0:
                 stop += self.num_epochs
 
-            if stop > self.num_epochs or start >= self.num_epochs or \
-                    start >= stop:
-                raise IndexError(textwrap.fill((
-                    f"The slice=`{start}:{stop}` is out of bounds for "
-                    f"AccessData with {self.num_epochs} epochs."
-                )))
+            if stop > self.num_epochs or start >= self.num_epochs or start >= stop:
+                raise IndexError(
+                    textwrap.fill(
+                        (
+                            f"The slice=`{start}:{stop}` is out of bounds for "
+                            f"AccessData with {self.num_epochs} epochs."
+                        )
+                    )
+                )
 
             data = self.copy()
             data.num_epochs = stop - start
             data.epochs = self.epochs.iloc[start:stop]
             data.epochs_scaled = self.epochs_scaled.iloc[start:stop]
             data.results = self.results.iloc[
-                start * self.population:stop * self.population
+                start * self.population : stop * self.population
             ]
             data.results_scaled = self.results_scaled.iloc[
-                start * self.population:stop * self.population
+                start * self.population : stop * self.population
             ]
             return data
 
         else:
-            raise TypeError(textwrap.fill((
-                "Epoch selection via subscripting is only possible with "
-                "integer / slice indices (e.g. `access_data[5]` or "
-                "`access_data[2:5]`). Received index with type "
-                f"`{type(index)}`."
-            )))
-
+            raise TypeError(
+                textwrap.fill(
+                    (
+                        "Epoch selection via subscripting is only possible with "
+                        "integer / slice indices (e.g. `access_data[5]` or "
+                        "`access_data[2:5]`). Received index with type "
+                        f"`{type(index)}`."
+                    )
+                )
+            )
 
     def __repr__(self):
         name = self.__class__.__name__
         underline = "-" * 80
 
-        def wrap(text, prep = 30):
+        def wrap(text, prep=30):
             return textwrap.fill(
-                text, width = 80,
-                initial_indent = prep * " ",
-                subsequent_indent = prep * " ",
+                text,
+                width=80,
+                initial_indent=prep * " ",
+                subsequent_indent=prep * " ",
             )[prep:]
-            '''Combine the column data for the relevant parameters.
-            '''
+            """Combine the column data for the relevant parameters.
+            """
+
         cols = wrap(", ".join(self.epochs.columns))
         epochs = f"DataFrame({cols})"
 
@@ -1972,15 +2120,11 @@ class AccessData:
         results_scaled = f"DataFrame({cols})"
 
         parameters = str(self.parameters).split("\n")
-        parameters = "\n".join(
-            parameters[0:1] +
-            [20 * " " + p for p in parameters[1:]]
-        )
+        parameters = "\n".join(parameters[0:1] + [20 * " " + p for p in parameters[1:]])
 
         parameters_scaled = str(self.parameters_scaled).split("\n")
         parameters_scaled = "\n".join(
-            parameters_scaled[0:1] +
-            [20 * " " + p for p in parameters_scaled[1:]]
+            parameters_scaled[0:1] + [20 * " " + p for p in parameters_scaled[1:]]
         )
 
         docstr = (
@@ -2009,11 +2153,8 @@ class AccessData:
         return "\n".join(docstr)
 
 
-
-
 def find_access_path(path):
-    '''Locate the `access_seed<seed>` directory.
-    '''
+    """Locate the `access_seed<seed>` directory."""
     finder = re.compile(r"access_seed[0-9]+")
     # The directory itself
     if finder.match(path):
@@ -2025,28 +2166,27 @@ def find_access_path(path):
     if len(matched) == 1:
         return os.path.join(path, matched[0])
     elif len(matched) > 1:
-        raise RuntimeError((
-            f"Multiple ACCES directories were found at `{path}`:\n"
-            f"{matched}\n\n"
-            "Use the full path to the ACCES directory you want."
-        ))
+        raise RuntimeError(
+            (
+                f"Multiple ACCES directories were found at `{path}`:\n"
+                f"{matched}\n\n"
+                "Use the full path to the ACCES directory you want."
+            )
+        )
 
     # If no `access_seed<seed>` was found, return the path as is in case it was
     # renamed but ACCES files are inside still
     return path
 
 
-
-
 class AccessCoupled:
-
     def __init__(
         self,
         simulations: Simulation,
-        scheduler = [sys.executable],
-        max_workers = None,
+        scheduler=[sys.executable],
+        max_workers=None,
     ):
-        '''`Access` class constructor.
+        """`Access` class constructor.
 
         Parameters
         ----------
@@ -2071,18 +2211,21 @@ class AccessCoupled:
             run the error function on each simulation result. If `None`, the
             output from `len(os.sched_getaffinity(0))` is used.
 
-        '''
+        """
 
         # Type-checking inputs
         def error_simulations(simulations):
             # Print error message if the input `simulations` does not have the
             # required type
-            raise TypeError(textwrap.fill((
-                "The `simulation` input parameter must be an instance of "
-                "`coexist.Simulation` (or a subclass thereof) or a list "
-                f"of simulations. Received type `{type(simulations)}`."
-            )))
-
+            raise TypeError(
+                textwrap.fill(
+                    (
+                        "The `simulation` input parameter must be an instance of "
+                        "`coexist.Simulation` (or a subclass thereof) or a list "
+                        f"of simulations. Received type `{type(simulations)}`."
+                    )
+                )
+            )
 
         if isinstance(simulations, Simulation):
             self.simulations = [simulations]
@@ -2098,13 +2241,15 @@ class AccessCoupled:
                     error_simulations(simulations)
 
                 if not params.equals(sim.parameters):
-                    raise ValueError((
-                        "The simulation parameters (`Simulation.parameters` "
-                        "attribute) must be the same across all simulations "
-                        "in the input list. The two unequal parameters are:\n"
-                        f"{params}\n\n"
-                        f"{sim.parameters}\n"
-                    ))
+                    raise ValueError(
+                        (
+                            "The simulation parameters (`Simulation.parameters` "
+                            "attribute) must be the same across all simulations "
+                            "in the input list. The two unequal parameters are:\n"
+                            f"{params}\n\n"
+                            f"{sim.parameters}\n"
+                        )
+                    )
 
             self.simulations = simulations
 
@@ -2151,26 +2296,29 @@ class AccessCoupled:
         self._stdout = None
         self._stderr = None
 
-
     def learn(
         self,
         error,
         start_times,
         end_times,
-        num_checkpoints = 100,
-        num_solutions = 10,
-        target_sigma = 0.1,
-        use_historical = True,
-        save_positions = True,
-        random_seed = None,
-        verbose = True,
+        num_checkpoints=100,
+        num_solutions=10,
+        target_sigma=0.1,
+        use_historical=True,
+        save_positions=True,
+        random_seed=None,
+        verbose=True,
     ):
         # Type-checking inputs
         if not callable(error):
-            raise TypeError(textwrap.fill((
-                "The input `error` must be a function (i.e. callable). "
-                f"Received `{error}` with type `{type(error)}`."
-            )))
+            raise TypeError(
+                textwrap.fill(
+                    (
+                        "The input `error` must be a function (i.e. callable). "
+                        f"Received `{error}` with type `{type(error)}`."
+                    )
+                )
+            )
 
         self.error = error
 
@@ -2184,30 +2332,36 @@ class AccessCoupled:
         else:
             self.end_times = [float(end_times) for _ in self.simulations]
 
-        if len(self.start_times) != len(self.simulations) or \
-                len(self.end_times) != len(self.simulations):
-            raise ValueError(textwrap.fill((
-                "The input `start_times` and `end_times` must have the same "
-                "number of elements as the number of simulations. Received "
-                f"{len(self.start_times)} start times / {len(self.end_times)} "
-                f"end times for {len(self.simulations)} simulations."
-            )))
+        if len(self.start_times) != len(self.simulations) or len(self.end_times) != len(
+            self.simulations
+        ):
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "The input `start_times` and `end_times` must have the same "
+                        "number of elements as the number of simulations. Received "
+                        f"{len(self.start_times)} start times / {len(self.end_times)} "
+                        f"end times for {len(self.simulations)} simulations."
+                    )
+                )
+            )
 
         if hasattr(num_checkpoints, "__iter__"):
             self.num_checkpoints = [int(nc) for nc in num_checkpoints]
         else:
-            self.num_checkpoints = [
-                int(num_checkpoints)
-                for _ in self.simulations
-            ]
+            self.num_checkpoints = [int(num_checkpoints) for _ in self.simulations]
 
         if len(self.num_checkpoints) != len(self.simulations):
-            raise ValueError(textwrap.fill((
-                "The input `num_checkpoints` must be either a single value or "
-                "a list with the same number of elements as the number of "
-                f"simulations. Received {len(self.num_checkpoints)} "
-                f"checkpoints for {len(self.simulations)} simulations."
-            )))
+            raise ValueError(
+                textwrap.fill(
+                    (
+                        "The input `num_checkpoints` must be either a single value or "
+                        "a list with the same number of elements as the number of "
+                        f"simulations. Received {len(self.num_checkpoints)} "
+                        f"checkpoints for {len(self.simulations)} simulations."
+                    )
+                )
+            )
 
         self.num_solutions = int(num_solutions)
         self.target_sigma = float(target_sigma)
@@ -2241,16 +2395,13 @@ class AccessCoupled:
         ]
 
         self.sim_paths = [
-            f"{self.classes_path}/simulation_{i}"
-            for i in range(len(self.simulations))
+            f"{self.classes_path}/simulation_{i}" for i in range(len(self.simulations))
         ]
 
         # Check if we have historical data about the optimisation - these are
         # pre-computed values for this exact simulation, random seed, and
         # number of solutions
-        self.history_path = (
-            f"{self.save_path}/opt_history_{self.num_solutions}.csv"
-        )
+        self.history_path = f"{self.save_path}/opt_history_{self.num_solutions}.csv"
 
         self.history_scaled_path = (
             f"{self.save_path}/opt_history_{self.num_solutions}_scaled.csv"
@@ -2262,7 +2413,7 @@ class AccessCoupled:
         # History columns: [param1, param2, ..., stddev_param1, stddev_param2,
         # ..., stddev_all, error_value]
         if use_historical and os.path.isfile(self.history_path):
-            history = np.loadtxt(self.history_path, dtype = float)
+            history = np.loadtxt(self.history_path, dtype=float)
         elif use_historical:
             history = []
         else:
@@ -2271,9 +2422,7 @@ class AccessCoupled:
         # Scaling and unscaling parameter values introduce numerical errors
         # that confuse the optimiser. Thus save unscaled values separately
         if self.use_historical and os.path.isfile(self.history_scaled_path):
-            history_scaled = np.loadtxt(
-                self.history_scaled_path, dtype = float
-            )
+            history_scaled = np.loadtxt(self.history_scaled_path, dtype=float)
         elif self.use_historical:
             history_scaled = []
         else:
@@ -2286,8 +2435,8 @@ class AccessCoupled:
         # If any `sigma` value is smaller than 5% (max - min), clip it
         for sim in sims:
             sim.parameters["sigma"].clip(
-                lower = 0.05 * (params_maxs - params_mins),
-                inplace = True,
+                lower=0.05 * (params_maxs - params_mins),
+                inplace=True,
             )
 
         # Scale sigma, bounds, solutions, results to unit variance
@@ -2296,18 +2445,19 @@ class AccessCoupled:
         # First guess, scaled
         x0 = sims[0].parameters["value"].to_numpy() / scaling
         sigma0 = 1.0
-        bounds = [
-            params_mins / scaling,
-            params_maxs / scaling
-        ]
+        bounds = [params_mins / scaling, params_maxs / scaling]
 
         # Instantiate CMA-ES optimiser
-        es = cma.CMAEvolutionStrategy(x0, sigma0, dict(
-            bounds = bounds,
-            popsize = self.num_solutions,
-            randn = lambda *args: rng.standard_normal(args),
-            verbose = 3 if self.verbose else -9,
-        ))
+        es = cma.CMAEvolutionStrategy(
+            x0,
+            sigma0,
+            dict(
+                bounds=bounds,
+                popsize=self.num_solutions,
+                randn=lambda *args: rng.standard_normal(args),
+                verbose=3 if self.verbose else -9,
+            ),
+        )
 
         # Start optimisation: ask the optimiser for parameter combinations
         # (solutions), run the simulations between `start_index:end_index` and
@@ -2318,9 +2468,7 @@ class AccessCoupled:
             solutions = es.ask()
 
             # If we have historical data, inject it for each epoch
-            if self.use_historical and \
-                    epoch * self.num_solutions < len(history_scaled):
-
+            if self.use_historical and epoch * self.num_solutions < len(history_scaled):
                 self.inject_historical(es, history_scaled, epoch)
                 epoch += 1
 
@@ -2346,9 +2494,9 @@ class AccessCoupled:
 
                 for sol, res in zip(solutions, results):
                     history.append(
-                        list(sol * scaling) +
-                        list(es.result.stds * scaling) +
-                        [es.sigma, res]
+                        list(sol * scaling)
+                        + list(es.result.stds * scaling)
+                        + [es.sigma, res]
                     )
 
                 np.savetxt(self.history_path, history)
@@ -2359,9 +2507,7 @@ class AccessCoupled:
 
                 for sol, res in zip(solutions, results):
                     history_scaled.append(
-                        list(sol) +
-                        list(es.result.stds) +
-                        [es.sigma, res]
+                        list(sol) + list(es.result.stds) + [es.sigma, res]
                     )
 
                 np.savetxt(self.history_scaled_path, history_scaled)
@@ -2376,20 +2522,20 @@ class AccessCoupled:
         stds = es.result.stds * scaling
 
         if self.verbose:
-            print(f"Best results for solutions: {solutions}", flush = True)
+            print(f"Best results for solutions: {solutions}", flush=True)
 
         # Run the simulation with the best parameters found and save the
         # results to disk. Return the paths to the saved values
-        radii_paths, positions_paths, velocities_paths = \
-            self.run_simulation_best(solutions, stds)
+        radii_paths, positions_paths, velocities_paths = self.run_simulation_best(
+            solutions, stds
+        )
 
         return radii_paths, positions_paths, velocities_paths
 
-
     def run_simulation_best(self, solutions, stds):
-        '''Save the radii, positions, and velocities for the simulations with
+        """Save the radii, positions, and velocities for the simulations with
         the best parameter values.
-        '''
+        """
         # Path for saving the simulations with the best parameters
         best_path = f"{self.save_path}/best"
 
@@ -2398,18 +2544,15 @@ class AccessCoupled:
 
         # Paths for saving the best simulations' outputs
         best_radii_paths = [
-            f"{best_path}/best_radii_{i}.npy"
-            for i in range(len(self.simulations))
+            f"{best_path}/best_radii_{i}.npy" for i in range(len(self.simulations))
         ]
 
         best_positions_paths = [
-            f"{best_path}/best_positions_{i}.npy"
-            for i in range(len(self.simulations))
+            f"{best_path}/best_positions_{i}.npy" for i in range(len(self.simulations))
         ]
 
         best_velocities_paths = [
-            f"{best_path}/best_velocities_{i}.npy"
-            for i in range(len(self.simulations))
+            f"{best_path}/best_velocities_{i}.npy" for i in range(len(self.simulations))
         ]
 
         # Change sigma, min and max based on optimisation results
@@ -2427,10 +2570,12 @@ class AccessCoupled:
         # done in parallel as the simulation library might be thread-unsafe
         for i, sim in enumerate(self.simulations):
             if self.verbose:
-                print((
-                    f"Running the simulation at index {i} with the best "
-                    "parameter values found..."
-                ))
+                print(
+                    (
+                        f"Running the simulation at index {i} with the best "
+                        "parameter values found..."
+                    )
+                )
 
             checkpoints = np.linspace(
                 self.start_times[i],
@@ -2447,8 +2592,8 @@ class AccessCoupled:
                 velocities.append(sim.velocities())
 
             radii = sim.radii()
-            positions = np.array(positions, dtype = float)
-            velocities = np.array(velocities, dtype = float)
+            positions = np.array(positions, dtype=float)
+            velocities = np.array(velocities, dtype=float)
 
             np.save(best_radii_paths[i], radii)
             np.save(best_positions_paths[i], positions)
@@ -2461,11 +2606,15 @@ class AccessCoupled:
         )
 
         if self.verbose:
-            print((f"Error (computed by the `error` function) for solution: "
-                   f"{error}\n---"), flush = True)
+            print(
+                (
+                    f"Error (computed by the `error` function) for solution: "
+                    f"{error}\n---"
+                ),
+                flush=True,
+            )
 
         return best_radii_paths, best_positions_paths, best_velocities_paths
-
 
     def create_directories(self):
         # Save the current simulation state in a `restarts` folder
@@ -2494,64 +2643,67 @@ class AccessCoupled:
             self.simulations[i].save(self.sim_paths[i])
 
         infofile = f"{self.save_path}/opt_run_info.txt"
-        with open(infofile, "a", encoding = "utf-8") as f:
+        with open(infofile, "a", encoding="utf-8") as f:
             now = datetime.now().strftime("%H:%M:%S - %D")
-            f.writelines([
-                "--------------------------------------------------------\n",
-                f"Starting ACCESS run at {now}\n\n",
-                "Simulations:\n"
-                f"{self.simulations}\n\n",
-                f"start_times =         {self.start_times}\n",
-                f"end_times =           {self.end_times}\n",
-                f"num_checkpoints =     {self.num_checkpoints}\n",
-                f"target_sigma =        {self.target_sigma}\n",
-                f"num_solutions =       {self.num_solutions}\n",
-                f"random_seed =         {self.random_seed}\n",
-                f"use_historical =      {self.use_historical}\n",
-                f"save_positions =      {self.save_positions}\n\n",
-                f"save_path =           {self.save_path}\n",
-                f"simulations_path =    {self.simulations_path}\n",
-                f"classes_path =        {self.classes_path}\n",
-                f"outputs_path =        {self.outputs_path}\n",
-                f"sim_classes_paths =   {self.sim_classes_paths}\n",
-                f"sim_paths =           {self.sim_paths}\n\n",
-                f"history_path =        {self.history_path}\n",
-                f"history_scaled_path = {self.history_scaled_path}\n",
-                "--------------------------------------------------------\n\n",
-            ])
-
+            f.writelines(
+                [
+                    "--------------------------------------------------------\n",
+                    f"Starting ACCESS run at {now}\n\n",
+                    "Simulations:\n" f"{self.simulations}\n\n",
+                    f"start_times =         {self.start_times}\n",
+                    f"end_times =           {self.end_times}\n",
+                    f"num_checkpoints =     {self.num_checkpoints}\n",
+                    f"target_sigma =        {self.target_sigma}\n",
+                    f"num_solutions =       {self.num_solutions}\n",
+                    f"random_seed =         {self.random_seed}\n",
+                    f"use_historical =      {self.use_historical}\n",
+                    f"save_positions =      {self.save_positions}\n\n",
+                    f"save_path =           {self.save_path}\n",
+                    f"simulations_path =    {self.simulations_path}\n",
+                    f"classes_path =        {self.classes_path}\n",
+                    f"outputs_path =        {self.outputs_path}\n",
+                    f"sim_classes_paths =   {self.sim_classes_paths}\n",
+                    f"sim_paths =           {self.sim_paths}\n\n",
+                    f"history_path =        {self.history_path}\n",
+                    f"history_scaled_path = {self.history_scaled_path}\n",
+                    "--------------------------------------------------------\n\n",
+                ]
+            )
 
     def inject_historical(self, es, history_scaled, epoch):
-        '''Inject the CMA-ES optimiser with pre-computed (historical) results.
+        """Inject the CMA-ES optimiser with pre-computed (historical) results.
         The solutions must have a Gaussian distribution in each problem
         dimension - though the standard deviation can vary for each of them.
         Ideally, this should only use historical values that CMA-ES asked for
         in a previous ACCESS run.
-        '''
+        """
 
         ns = self.num_solutions
         num_params = len(self.simulations[0].parameters)
 
-        results_scaled = history_scaled[(epoch * ns):(epoch * ns + ns)]
+        results_scaled = history_scaled[(epoch * ns) : (epoch * ns + ns)]
         es.tell(results_scaled[:, :num_params], results_scaled[:, -1])
 
         if self.verbose:
-            print((
-                f"Injected {(epoch + 1) * len(results_scaled)} / "
-                f"{len(history_scaled)} historical solutions."
-            ))
-
+            print(
+                (
+                    f"Injected {(epoch + 1) * len(results_scaled)} / "
+                    f"{len(history_scaled)} historical solutions."
+                )
+            )
 
     def print_before_eval(self, es, solutions):
-        '''Print the individual and overal scaled standard deviations along
+        """Print the individual and overal scaled standard deviations along
         with the parameter combinations to try.
-        '''
-        print((
-            f"Scaled overall standard deviation: {es.sigma}\n"
-            f"Scaled individual standard deviations:\n{es.result.stds}"
-            f"\n\nTrying {len(solutions)} parameter combinations..."
-        ), flush = True)
-
+        """
+        print(
+            (
+                f"Scaled overall standard deviation: {es.sigma}\n"
+                f"Scaled individual standard deviations:\n{es.result.stds}"
+                f"\n\nTrying {len(solutions)} parameter combinations..."
+            ),
+            flush=True,
+        )
 
     def print_after_eval(
         self,
@@ -2562,16 +2714,18 @@ class AccessCoupled:
     ):
         # Display evaluation results: solutions, error values, etc.
         cols = list(self.simulations[0].parameters.index) + ["error"]
-        sols_results = np.hstack((
-            solutions * scaling,
-            results[:, np.newaxis],
-        ))
+        sols_results = np.hstack(
+            (
+                solutions * scaling,
+                results[:, np.newaxis],
+            )
+        )
 
         # Store solutions and results in a DataFrame for easy pretty printing
         sols_results = pd.DataFrame(
-            data = sols_results,
-            columns = cols,
-            index = None,
+            data=sols_results,
+            columns=cols,
+            index=None,
         )
 
         # Display all the DataFrame columns and rows
@@ -2581,51 +2735,51 @@ class AccessCoupled:
         pd.set_option("display.max_columns", None)
         pd.set_option("display.max_rows", None)
 
-        print((
-            f"{sols_results}\n"
-            f"Function evaluations: {es.result.evaluations}\n---"
-        ), flush = True)
+        print(
+            (f"{sols_results}\n" f"Function evaluations: {es.result.evaluations}\n---"),
+            flush=True,
+        )
 
         pd.set_option("display.max_columns", old_max_columns)
         pd.set_option("display.max_rows", old_max_rows)
 
-
     def finished(self, es):
-        '''If the overal sigma value is less than the target sigma value,
+        """If the overal sigma value is less than the target sigma value,
         finish the simulation.
-        '''
+        """
         if es.sigma < self.target_sigma:
             if self.verbose:
-                print((
-                    "Optimal solution found within `target_sigma`, i.e. "
-                    f"{self.target_sigma * 100}%:\n"
-                    f"sigma = {es.sigma} < {self.target_sigma}"
-                ), flush = True)
+                print(
+                    (
+                        "Optimal solution found within `target_sigma`, i.e. "
+                        f"{self.target_sigma * 100}%:\n"
+                        f"sigma = {es.sigma} < {self.target_sigma}"
+                    ),
+                    flush=True,
+                )
 
             return True
 
         return False
 
-
     def std_outputs(self, run_index, sim_index, stdout, stderr):
-        '''If new errors and outputs are produced, write them to the correct
+        """If new errors and outputs are produced, write them to the correct
         olders.
-        '''
+        """
         # If we had new errors, write them to `error.log`.
         if len(stderr) and stderr != self._stderr:
             self._stderr = stderr.decode("utf-8")
 
-            error_path = (
-                f"{self.outputs_path}/"
-                f"error_{run_index}_{sim_index}.log"
-            )
+            error_path = f"{self.outputs_path}/" f"error_{run_index}_{sim_index}.log"
 
-            print((
-                "A new error ocurred while running simulation (run "
-                f"{run_index} / index {sim_index}):\n"
-                f"{self._stderr}\n\n"
-                f"Writing error message to `{error_path}`\n"
-            ))
+            print(
+                (
+                    "A new error ocurred while running simulation (run "
+                    f"{run_index} / index {sim_index}):\n"
+                    f"{self._stderr}\n\n"
+                    f"Writing error message to `{error_path}`\n"
+                )
+            )
 
             with open(error_path, "w") as f:
                 f.write(self._stderr)
@@ -2634,26 +2788,24 @@ class AccessCoupled:
         if len(stdout) and stdout != self._stdout:
             self._stdout = stdout.decode("utf-8")
 
-            output_path = (
-                f"{self.outputs_path}/"
-                f"output_{run_index}_{sim_index}.log"
-            )
+            output_path = f"{self.outputs_path}/" f"output_{run_index}_{sim_index}.log"
 
-            print((
-                "A new message was outputted while running simulation (run "
-                f"{run_index} / index {sim_index}):\n"
-                f"{self._stdout}\n\n"
-                f"Writing output message to `{output_path}`\n"
-            ))
+            print(
+                (
+                    "A new message was outputted while running simulation (run "
+                    f"{run_index} / index {sim_index}):\n"
+                    f"{self._stdout}\n\n"
+                    f"Writing output message to `{output_path}`\n"
+                )
+            )
 
             with open(output_path, "w") as f:
                 f.write(self._stdout)
 
-
     def simulations_save_paths(self, epoch):
-        '''For every simulation run in every parameter combination, append the
+        """For every simulation run in every parameter combination, append the
         simulation, radii, position and velocity path to a corresponding list.
-        '''
+        """
         sim_paths = []
         radii_paths = []
         positions_paths = []
@@ -2670,25 +2822,27 @@ class AccessCoupled:
 
             # For every simulation run...
             for j in range(len(self.simulations)):
-                sim_run.append((
-                    f"{self.simulations_path}/"
-                    f"opt_{start_index + i}_{j}"
-                ))
+                sim_run.append(
+                    (f"{self.simulations_path}/" f"opt_{start_index + i}_{j}")
+                )
 
-                radii_run.append((
-                    f"{self.simulations_path}/"
-                    f"opt_{start_index + i}_{j}_radii.npy"
-                ))
+                radii_run.append(
+                    (f"{self.simulations_path}/" f"opt_{start_index + i}_{j}_radii.npy")
+                )
 
-                positions_run.append((
-                    f"{self.simulations_path}/"
-                    f"opt_{start_index + i}_{j}_positions.npy"
-                ))
+                positions_run.append(
+                    (
+                        f"{self.simulations_path}/"
+                        f"opt_{start_index + i}_{j}_positions.npy"
+                    )
+                )
 
-                velocities_run.append((
-                    f"{self.simulations_path}/"
-                    f"opt_{start_index + i}_{j}_velocities.npy"
-                ))
+                velocities_run.append(
+                    (
+                        f"{self.simulations_path}/"
+                        f"opt_{start_index + i}_{j}_velocities.npy"
+                    )
+                )
 
             sim_paths.append(sim_run)
             radii_paths.append(radii_run)
@@ -2697,28 +2851,27 @@ class AccessCoupled:
 
         return sim_paths, radii_paths, positions_paths, velocities_paths
 
-
     def try_solutions(self, solutions, epoch):
-        '''For every solution to try and simulate a run, start a separate OS
+        """For every solution to try and simulate a run, start a separate OS
         process that runs the `async_access_error.py` file and saves the
         positions in a `.npy` file.
-        '''
+        """
 
         # Aliases
         param_names = self.simulations[0].parameters.index
 
         # Path to `async_access_error.py`
         async_xi = os.path.join(
-            os.path.split(coexist.__file__)[0],
-            "async_access_error.py"
+            os.path.split(coexist.__file__)[0], "async_access_error.py"
         )
 
         processes = []
 
         # These are all lists of lists: axis 0 is the parameter combination to
         # try, while axis 1 is the particular simulation to run
-        sim_paths, radii_paths, positions_paths, velocities_paths = \
+        sim_paths, radii_paths, positions_paths, velocities_paths = (
             self.simulations_save_paths(epoch)
+        )
 
         # Catch the KeyboardInterrupt (Ctrl-C) signal to shut down the spawned
         # processes before aborting.
@@ -2730,7 +2883,6 @@ class AccessCoupled:
 
                 # For every simulation in `self.simulations`, start a new proc
                 for j, sim in enumerate(self.simulations):
-
                     # Change parameter values to save them along with the
                     # full simulation state
                     for k, sol_val in enumerate(sol):
@@ -2740,8 +2892,9 @@ class AccessCoupled:
 
                     single_run_processes.append(
                         subprocess.Popen(
-                            self.scheduler + [  # Python interpreter path
-                                async_xi,       # async_access_error.py path
+                            self.scheduler
+                            + [  # Python interpreter path
+                                async_xi,  # async_access_error.py path
                                 self.sim_classes_paths[j],
                                 sim_paths[i][j],
                                 str(self.start_times[j]),
@@ -2751,16 +2904,15 @@ class AccessCoupled:
                                 positions_paths[i][j],
                                 velocities_paths[i][j],
                             ],
-                            stdout = subprocess.PIPE,
-                            stderr = subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
                         )
                     )
 
                 processes.append(single_run_processes)
 
             # Compute the error function values in a parallel environment.
-            with ProcessPoolExecutor(max_workers = self.max_workers) \
-                    as executor:
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = []
 
                 # Get the output from each OS process / simulation
@@ -2776,20 +2928,23 @@ class AccessCoupled:
 
                         # Only load simulations if they exist - i.e. no errors
                         # occurred
-                        if not (os.path.isfile(radii_paths[i][j]) and
-                                os.path.isfile(positions_paths[i][j]) and
-                                os.path.isfile(velocities_paths[i][j])):
-
-                            print((
-                                "At least one of the simulation files "
-                                f"{radii_paths[i][j]}, "
-                                f"{positions_paths[i][j]} or "
-                                f"{velocities_paths[i][j]}, was not found; "
-                                f"the simulation (run {i} / index {j}) most "
-                                "likely crashed. Check the error, output and "
-                                "LIGGGHTS logs for what went wrong. The error "
-                                "value for this simulation run is set to NaN."
-                            ))
+                        if not (
+                            os.path.isfile(radii_paths[i][j])
+                            and os.path.isfile(positions_paths[i][j])
+                            and os.path.isfile(velocities_paths[i][j])
+                        ):
+                            print(
+                                (
+                                    "At least one of the simulation files "
+                                    f"{radii_paths[i][j]}, "
+                                    f"{positions_paths[i][j]} or "
+                                    f"{velocities_paths[i][j]}, was not found; "
+                                    f"the simulation (run {i} / index {j}) most "
+                                    "likely crashed. Check the error, output and "
+                                    "LIGGGHTS logs for what went wrong. The error "
+                                    "value for this simulation run is set to NaN."
+                                )
+                            )
 
                             crashed = True
 
