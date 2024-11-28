@@ -932,6 +932,7 @@ class Access:
         self,
         script_path: str,
         scheduler=schedulers.LocalScheduler(),
+        pre_epoch_scheduler=schedulers.LocalScheduler(),
     ):
         """`Access` class constructor.
 
@@ -969,6 +970,7 @@ class Access:
                 )
             )
         self.scheduler = scheduler
+        self.pre_epoch_scheduler = pre_epoch_scheduler
 
         # Will be set in `learn`
         self.multi_objective = None
@@ -999,7 +1001,7 @@ class Access:
             raise TypeError(
                 textwrap.fill(
                     (
-                        "The input `mulit_objective` has no attribute `combine`. "
+                        "The input `multi_objective` has no attribute `combine`. "
                         "Check you are using a `coexist.combiner` to combine "
                         "multiple error values into a single combined error."
                     )
@@ -1040,9 +1042,11 @@ class Access:
         sigma0 = 1.0
 
         # Instantiate CMA-ES optimiser; silence initial CMA-ES message
-        with open(os.devnull, "w") as f, contextlib.redirect_stdout(
-            f
-        ), warnings.catch_warnings():
+        with (
+            open(os.devnull, "w") as f,
+            contextlib.redirect_stdout(f),
+            warnings.catch_warnings(),
+        ):
             # CMA-ES sometimes warns about changing the initial standard
             # deviation; ACCES users don't control that, so we can hide it
             warnings.simplefilter("ignore", UserWarning)
@@ -1084,7 +1088,7 @@ class Access:
             # Save current epoch's mean, sigma
             self.progress.update_epochs(es, scaling)
 
-            # Run any pre-requisites for an epoch            
+            # Run any pre-requisites for an epoch
             if pre_epoch is not None:
                 print(f"Executing pre-epoch script: {pre_epoch}")
                 self.execute_global_script(pre_epoch, solutions * scaling, epoch, "pre")
@@ -1092,7 +1096,7 @@ class Access:
             # Evaluate each solution - i.e. run simulations in parallel
             results = self.evaluate_solutions(solutions * scaling, epoch)
 
-            # Run any post-requisites for an epoch            
+            # Run any post-requisites for an epoch
             if post_epoch is not None:
                 print(f"Executing post-epoch script: {post_epoch}")
                 self.execute_global_script(
@@ -1165,7 +1169,7 @@ class Access:
                     pickle.dump(parameters, f)
 
             # Get job scheduling command
-            scheduler_cmd = self.scheduler.schedule(
+            scheduler_cmd = self.pre_epoch_scheduler.schedule(
                 self.paths.directory,
                 start_index + i,
             )
